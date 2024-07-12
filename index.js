@@ -4,7 +4,7 @@ const github = require('@actions/github');
 try {
   const packageName = core.getInput('package');
   const owner = github.context.repo.owner;
-  const filters = core.getInput('filters');
+  const filters = core.getInput('filters').split("\n").map((l) => l.trim());
   const keepN = core.getInput('keep_n');
   const olderThan = core.getInput('older_than');
   // calculate older than time

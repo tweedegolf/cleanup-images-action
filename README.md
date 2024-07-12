@@ -24,12 +24,14 @@ on:
 
 jobs:
   cleanup:
-    - step: "tweedegolf/cleanup-images-action@main"
+    - uses: "tweedegolf/cleanup-images-action@main"
       with:
         package: debian
-        filter: ["^nightly-\\d{2}-\\d{2}-\\d{4}$"]
+        filter: |-
+          ^stable-\\d{2}-\\d{2}-\\d{4}$
+          ^nightly-\\d{2}-\\d{2}-\\d{4}$
         keep_n: 5
-    - step: "tweedegolf/cleanup-untagged-images-action@main"
+    - uses: "tweedegolf/cleanup-untagged-images-action@main"
       with:
         package: debian
 ```
@@ -62,7 +64,7 @@ This step has several parameters that allow customizing the behavior:
       <td></td>
     </tr>
     <tr><td colspan="3">
-      A list of regular expressions matching some specific tags for the container
+      A newline separated list of regular expressions matching some specific tags for the container
     </td></tr>
     <tr>
       <td><code>keep_n</code></td>

@@ -5,9 +5,9 @@ inputs:
     required: true
     type: string
   filters:
-    description: "A list of regular expressions matching some specific tags for the container"
+    description: "A newline separated list of regular expressions matching some specific tags for the container"
     required: true
-    type: array
+    type: string
   keep_n:
     description: "How many of the most recently created and matched tags to keep"
     required: true
