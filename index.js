@@ -4,7 +4,10 @@ const github = require('@actions/github');
 async function run() {
   const packageName = core.getInput('package');
   const owner = github.context.repo.owner;
-  const filters = core.getInput('filters').split("\n").map((l) => l.trim());
+  const filters = core
+    .getInput('filters')
+    .split('\n')
+    .map((f) => new RegExp(f.trim()));
   const keepN = core.getInput('keep_n');
   const olderThan = core.getInput('older_than');
   const token = core.getInput('token');
