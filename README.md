@@ -38,11 +38,7 @@ In this example, we run a cleanup job that removes old nightly tagged images
 first, and then removes any remaining untagged images after that. Note how this
 action is only run on a schedule once a week, there is no need to run it after
 every main branch update or every pull request unless lots of container builds
-are happening on your repository. You might have additional jobs that run the
-tag cleanup step if there are multiple patterns you wish to match, but we
-always make sure that the untagged cleanup runs after all other jobs have
-finished to make sure we capture any additional untagged images from the other
-cleanup jobs.
+are happening on your repository.
 
 ### Tag cleanup step inputs
 This step has several parameters that allow customizing the behavior:
