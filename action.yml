@@ -1,0 +1,22 @@
+name: Cleanup images
+inputs:
+  package:
+    description: "Name of the container registry package"
+    required: true
+    type: string
+  filters:
+    description: "A list of regular expressions matching some specific tags for the container"
+    required: true
+    type: array
+  keep_n:
+    description: "How many of the most recently created and matched tags to keep"
+    required: true
+    type: number
+  older_than:
+    description: "Only remove tags at least as old as this number of days"
+    required: false
+    default: -1
+    type: number
+runs:
+  using: 'node20'
+  main: 'index.js'
