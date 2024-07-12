@@ -1,7 +1,7 @@
 const core = require('@actions/core');
 const github = require('@actions/github');
 
-try {
+async function run() {
   const packageName = core.getInput('package');
   const owner = github.context.repo.owner;
   const filters = core.getInput('filters').split("\n").map((l) => l.trim());
@@ -75,6 +75,6 @@ try {
       }' (with tags: ${r.metadata.container.tags.join(', ')})`
     );
   }
-} catch (error) {
-  core.setFailed(error.message);
 }
+
+run().catch((e) => core.setFailed(e.message));
