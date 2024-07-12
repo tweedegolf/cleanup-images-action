@@ -31118,9 +31118,10 @@ async function run() {
 
     return tags.some((t) => !filters.some((f) => f.test(t)));
   });
+  console.log(`Found ${containerImages.length} images if which ${globalKeep.length} are untagged`);
   // list images to keep per filter
-  const filterKeep = filters.flatMap((filter) =>
-    containerImages
+  const filterKeep = filters.flatMap((filter) => {
+    const keep = containerImages
       .filter((p) => {
         const tags = p.metadata?.container?.tags ?? [];
         if (tags.length === 0) {
@@ -31140,8 +31141,13 @@ async function run() {
           olderThan > 0 ? new Date(p.created_at) > olderThanTime : false;
 
         return isRecent || index < keepN;
-      })
-  );
+      });
+
+    const list = keep.map((p) => `${p.id}-${p.metadata.container.tags}`);
+    console.log(`Keeping ${list} for filter ${filter}`);
+
+    return keep;
+});
   // list all images that do not have to be kept
   const keepIds = [...globalKeep, ...filterKeep].map((p) => p.id);
   const removeImages = containerImages.filter((p) => !keepIds.includes(p.id));
