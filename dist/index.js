@@ -31118,7 +31118,7 @@ async function run() {
 
     return tags.some((t) => !filters.some((f) => f.test(t)));
   });
-  console.log(`Found ${containerImages.length} images if which ${globalKeep.length} are untagged`);
+  console.log(`Found ${containerImages.length} images of which ${globalKeep.length} do not match any filter or have no tags`);
   // list images to keep per filter
   const filterKeep = filters.flatMap((filter) => {
     const keep = containerImages
@@ -31143,8 +31143,8 @@ async function run() {
         return isRecent || index < keepN;
       });
 
-    const list = keep.map((p) => `${p.id}-${p.metadata.container.tags}`);
-    console.log(`Keeping ${list} for filter ${filter}`);
+    const list = keep.map((p) => `${p.id}-(${p.metadata.container.tags.join('+')})`);
+    console.log(`Keeping [${list.join(', ')}] for filter ${filter}`);
 
     return keep;
 });
