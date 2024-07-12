@@ -38,7 +38,7 @@ async function run() {
 
     return tags.some((t) => !filters.some((f) => f.test(t)));
   });
-  console.log(`Found ${containerImages.length} images if which ${globalKeep.length} do not match any filter or have no tags`);
+  console.log(`Found ${containerImages.length} images of which ${globalKeep.length} do not match any filter or have no tags`);
   // list images to keep per filter
   const filterKeep = filters.flatMap((filter) => {
     const keep = containerImages
