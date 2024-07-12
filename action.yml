@@ -17,6 +17,10 @@ inputs:
     required: false
     default: -1
     type: number
+  token:
+    required: false
+    type: string
+    default: ${{ github.token }}
 runs:
   using: 'node20'
   main: 'index.js'

@@ -7,12 +7,14 @@ async function run() {
   const filters = core.getInput('filters').split("\n").map((l) => l.trim());
   const keepN = core.getInput('keep_n');
   const olderThan = core.getInput('older_than');
+  const token = core.getInput('token');
   // calculate older than time
   const olderThanTime = new Date();
   olderThanTime.setDate(olderThanTime.getDate() - olderThan);
   // fetch all packages
-  const packages = await github.paginate(
-    github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
+  const octokit = github.getOctokit(token);
+  const packages = await octokit.paginate(
+    octokit.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
     {
       package_type: 'container',
       package_name: packageName,
@@ -63,7 +65,7 @@ async function run() {
   // remove the images
   console.log(`Found ${removeImages.length} tagged images to remove`);
   for (const r of removeImages) {
-    await github.rest.packages.deletePackageVersionForOrg({
+    await octokit.rest.packages.deletePackageVersionForOrg({
       package_type: 'container',
       package_name: packageName,
       org: owner,
