@@ -24,16 +24,18 @@ on:
 
 jobs:
   cleanup:
-    - uses: "tweedegolf/cleanup-images-action@main"
-      with:
-        package: debian
-        filter: |-
-          ^stable-\\d{2}-\\d{2}-\\d{4}$
-          ^nightly-\\d{2}-\\d{2}-\\d{4}$
-        keep_n: 5
-    - uses: "tweedegolf/cleanup-untagged-images-action@main"
-      with:
-        package: debian
+    runs-on: ubuntu-latest
+    steps:
+      - uses: "tweedegolf/cleanup-images-action@main"
+        with:
+          package: debian
+          filter: |-
+            ^stable-\\d{2}-\\d{2}-\\d{4}$
+            ^nightly-\\d{2}-\\d{2}-\\d{4}$
+          keep_n: 5
+      - uses: "tweedegolf/cleanup-untagged-images-action@main"
+        with:
+          package: debian
 ```
 
 In this example, we run a cleanup job that removes old nightly tagged images
