@@ -44,6 +44,16 @@ action is only run on a schedule once a week, there is no need to run it after
 every main branch update or every pull request unless lots of container builds
 are happening on your repository.
 
+### Building
+
+After modifying `index.js`, rebuild the bundle before committing:
+
+```bash
+npm run build
+```
+
+This uses [esbuild](https://esbuild.github.io/) to bundle `index.js` and all dependencies into `dist/index.js`, which is what the action executes.
+
 ### Tag cleanup step inputs
 This step has several parameters that allow customizing the behavior:
 

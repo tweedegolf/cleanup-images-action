@@ -1,21 +1,22 @@
-const core = require('@actions/core');
-const github = require('@actions/github');
+import { getInput, info, debug, setFailed } from '@actions/core';
+import { context, getOctokit } from '@actions/github';
 
 async function run() {
-  const packageName = core.getInput('package');
-  const owner = github.context.repo.owner;
-  const filters = core
-    .getInput('filters')
+  const packageName = getInput('package');
+  const owner = context.repo.owner;
+  const filters = getInput('filters')
     .split('\n')
-    .map((f) => new RegExp(f.trim()));
-  const keepN = core.getInput('keep_n');
-  const olderThan = core.getInput('older_than');
-  const token = core.getInput('token');
+    .map((f) => f.trim())
+    .filter((f) => f.length > 0)
+    .map((f) => new RegExp(f));
+  const keepN = parseInt(getInput('keep_n'), 10);
+  const olderThan = parseInt(getInput('older_than'), 10);
+  const token = getInput('token');
   // calculate older than time
   const olderThanTime = new Date();
   olderThanTime.setDate(olderThanTime.getDate() - olderThan);
   // fetch all packages
-  const octokit = github.getOctokit(token);
+  const octokit = getOctokit(token);
   const packages = await octokit.paginate(
     octokit.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
     {
@@ -38,7 +39,7 @@ async function run() {
 
     return tags.some((t) => !filters.some((f) => f.test(t)));
   });
-  console.log(`Found ${containerImages.length} images of which ${globalKeep.length} do not match any filter or have no tags`);
+  info(`Found ${containerImages.length} images of which ${globalKeep.length} do not match any filter or have no tags`);
   // list images to keep per filter
   const filterKeep = filters.flatMap((filter) => {
     const keep = containerImages
@@ -63,16 +64,16 @@ async function run() {
         return isRecent || index < keepN;
       });
 
-    const list = keep.map((p) => `${p.id}-(${p.metadata.container.tags.join('+')})`);
-    console.log(`Keeping [${list.join(', ')}] for filter ${filter}`);
+    const list = keep.map((p) => `${p.id}-(${p.metadata?.container?.tags?.join('+')})`);
+    info(`Keeping [${list.join(', ')}] for filter ${filter}`);
 
     return keep;
-});
+  });
   // list all images that do not have to be kept
-  const keepIds = [...globalKeep, ...filterKeep].map((p) => p.id);
-  const removeImages = containerImages.filter((p) => !keepIds.includes(p.id));
+  const keepIds = new Set([...globalKeep, ...filterKeep].map((p) => p.id));
+  const removeImages = containerImages.filter((p) => !keepIds.has(p.id));
   // remove the images
-  console.log(`Found ${removeImages.length} tagged images to remove`);
+  info(`Found ${removeImages.length} tagged images to remove`);
   for (const r of removeImages) {
     await octokit.rest.packages.deletePackageVersionForOrg({
       package_type: 'container',
@@ -80,12 +81,13 @@ async function run() {
       org: owner,
       package_version_id: r.id,
     });
-    console.log(
-      `Deleted container image '${
-        r.name
-      }' (with tags: ${r.metadata.container.tags.join(', ')})`
+    info(
+      `Deleted container image '${r.name}' (with tags: ${r.metadata?.container?.tags?.join(', ')})`
     );
   }
 }
 
-run().catch((e) => core.setFailed(e.message));
+run().catch((e) => {
+  debug(e.stack);
+  setFailed(e.message);
+});
