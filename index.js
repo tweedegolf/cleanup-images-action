@@ -1,4 +1,4 @@
-import { getInput, info, debug, setFailed } from '@actions/core';
+import { getInput, info, warning, debug, setFailed } from '@actions/core';
 import { context, getOctokit } from '@actions/github';
 
 async function run() {
@@ -75,15 +75,30 @@ async function run() {
   // remove the images
   info(`Found ${removeImages.length} tagged images to remove`);
   for (const r of removeImages) {
-    await octokit.rest.packages.deletePackageVersionForOrg({
-      package_type: 'container',
-      package_name: packageName,
-      org: owner,
-      package_version_id: r.id,
-    });
-    info(
-      `Deleted container image '${r.name}' (with tags: ${r.metadata?.container?.tags?.join(', ')})`
-    );
+    try {
+      await octokit.rest.packages.deletePackageVersionForOrg({
+        package_type: 'container',
+        package_name: packageName,
+        org: owner,
+        package_version_id: r.id,
+      });
+      info(
+        `Deleted container image '${r.name}' (with tags: ${r.metadata?.container?.tags?.join(', ')})`
+      );
+    } catch (e) {
+      // A concurrently running cleanup may have already deleted this version.
+      // Treat a missing version as success rather than failing the whole run.
+      if (e.status === 404) {
+        info(
+          `Container image '${r.name}' was already deleted (likely by a concurrent cleanup), skipping`
+        );
+        continue;
+      }
+
+      warning(
+        `Failed to delete container image '${r.name}': ${e.message}`
+      );
+    }
   }
 }
 

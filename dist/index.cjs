@@ -5,7 +5,11 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -2040,20 +2044,13 @@ var require_dispatcher_base = __commonJS({
     var kOnDestroyed = /* @__PURE__ */ Symbol("onDestroyed");
     var kOnClosed = /* @__PURE__ */ Symbol("onClosed");
     var kInterceptedDispatch = /* @__PURE__ */ Symbol("Intercepted Dispatch");
-    var kWebSocketOptions = /* @__PURE__ */ Symbol("webSocketOptions");
     var DispatcherBase = class extends Dispatcher {
-      constructor(opts) {
+      constructor() {
         super();
         this[kDestroyed] = false;
         this[kOnDestroyed] = null;
         this[kClosed] = false;
         this[kOnClosed] = [];
-        this[kWebSocketOptions] = opts?.webSocket ?? {};
-      }
-      get webSocketOptions() {
-        return {
-          maxPayloadSize: this[kWebSocketOptions].maxPayloadSize ?? 128 * 1024 * 1024
-        };
       }
       get destroyed() {
         return this[kDestroyed];
@@ -7492,10 +7489,9 @@ var require_client = __commonJS({
         autoSelectFamilyAttemptTimeout,
         // h2
         maxConcurrentStreams,
-        allowH2,
-        webSocket
+        allowH2
       } = {}) {
-        super({ webSocket });
+        super();
         if (keepAlive !== void 0) {
           throw new InvalidArgumentError("unsupported keepAlive, use pipelining=0 instead");
         }
@@ -8001,8 +7997,8 @@ var require_pool_base = __commonJS({
     var kRemoveClient = /* @__PURE__ */ Symbol("remove client");
     var kStats = /* @__PURE__ */ Symbol("stats");
     var PoolBase = class extends DispatcherBase {
-      constructor(opts) {
-        super(opts);
+      constructor() {
+        super();
         this[kQueue] = new FixedQueue();
         this[kClients] = [];
         this[kQueued] = 0;
@@ -8173,6 +8169,7 @@ var require_pool = __commonJS({
         allowH2,
         ...options
       } = {}) {
+        super();
         if (connections != null && (!Number.isFinite(connections) || connections < 0)) {
           throw new InvalidArgumentError("invalid connections");
         }
@@ -8193,7 +8190,6 @@ var require_pool = __commonJS({
             ...connect
           });
         }
-        super(options);
         this[kInterceptors] = options.interceptors?.Pool && Array.isArray(options.interceptors.Pool) ? options.interceptors.Pool : [];
         this[kConnections] = connections || null;
         this[kUrl] = util.parseOrigin(origin);
@@ -8393,6 +8389,7 @@ var require_agent = __commonJS({
     }
     var Agent = class extends DispatcherBase {
       constructor({ factory = defaultFactory, maxRedirections = 0, connect, ...options } = {}) {
+        super();
         if (typeof factory !== "function") {
           throw new InvalidArgumentError("factory must be a function.");
         }
@@ -8402,7 +8399,6 @@ var require_agent = __commonJS({
         if (!Number.isInteger(maxRedirections) || maxRedirections < 0) {
           throw new InvalidArgumentError("maxRedirections must be a positive number");
         }
-        super(options);
         if (connect && typeof connect !== "function") {
           connect = { ...connect };
         }
@@ -17036,26 +17032,27 @@ var require_permessage_deflate = __commonJS({
     var tail = Buffer.from([0, 0, 255, 255]);
     var kBuffer = /* @__PURE__ */ Symbol("kBuffer");
     var kLength = /* @__PURE__ */ Symbol("kLength");
+    var kDefaultMaxDecompressedSize = 4 * 1024 * 1024;
     var PerMessageDeflate = class {
       /** @type {import('node:zlib').InflateRaw} */
       #inflate;
       #options = {};
-      #maxPayloadSize = 0;
+      /** @type {boolean} */
+      #aborted = false;
+      /** @type {Function|null} */
+      #currentCallback = null;
       /**
        * @param {Map<string, string>} extensions
        */
-      constructor(extensions, options) {
+      constructor(extensions) {
         this.#options.serverNoContextTakeover = extensions.has("server_no_context_takeover");
         this.#options.serverMaxWindowBits = extensions.get("server_max_window_bits");
-        this.#maxPayloadSize = options.maxPayloadSize;
       }
-      /**
-       * Decompress a compressed payload.
-       * @param {Buffer} chunk Compressed data
-       * @param {boolean} fin Final fragment flag
-       * @param {Function} callback Callback function
-       */
       decompress(chunk, fin, callback) {
+        if (this.#aborted) {
+          callback(new MessageSizeExceededError());
+          return;
+        }
         if (!this.#inflate) {
           let windowBits = Z_DEFAULT_WINDOWBITS;
           if (this.#options.serverMaxWindowBits) {
@@ -17074,11 +17071,20 @@ var require_permessage_deflate = __commonJS({
           this.#inflate[kBuffer] = [];
           this.#inflate[kLength] = 0;
           this.#inflate.on("data", (data) => {
+            if (this.#aborted) {
+              return;
+            }
             this.#inflate[kLength] += data.length;
-            if (this.#maxPayloadSize > 0 && this.#inflate[kLength] > this.#maxPayloadSize) {
-              callback(new MessageSizeExceededError());
+            if (this.#inflate[kLength] > kDefaultMaxDecompressedSize) {
+              this.#aborted = true;
               this.#inflate.removeAllListeners();
+              this.#inflate.destroy();
               this.#inflate = null;
+              if (this.#currentCallback) {
+                const cb = this.#currentCallback;
+                this.#currentCallback = null;
+                cb(new MessageSizeExceededError());
+              }
               return;
             }
             this.#inflate[kBuffer].push(data);
@@ -17088,17 +17094,19 @@ var require_permessage_deflate = __commonJS({
             callback(err);
           });
         }
+        this.#currentCallback = callback;
         this.#inflate.write(chunk);
         if (fin) {
           this.#inflate.write(tail);
         }
         this.#inflate.flush(() => {
-          if (!this.#inflate) {
+          if (this.#aborted || !this.#inflate) {
             return;
           }
           const full = Buffer.concat(this.#inflate[kBuffer], this.#inflate[kLength]);
           this.#inflate[kBuffer].length = 0;
           this.#inflate[kLength] = 0;
+          this.#currentCallback = null;
           callback(null, full);
         });
       }
@@ -17129,10 +17137,8 @@ var require_receiver = __commonJS({
     var { WebsocketFrameSend } = require_frame();
     var { closeWebSocketConnection } = require_connection();
     var { PerMessageDeflate } = require_permessage_deflate();
-    var { MessageSizeExceededError } = require_errors();
     var ByteParser = class extends Writable {
       #buffers = [];
-      #fragmentsBytes = 0;
       #byteOffset = 0;
       #loop = false;
       #state = parserStates.INFO;
@@ -17140,20 +17146,16 @@ var require_receiver = __commonJS({
       #fragments = [];
       /** @type {Map<string, PerMessageDeflate>} */
       #extensions;
-      /** @type {number} */
-      #maxPayloadSize;
       /**
        * @param {import('./websocket').WebSocket} ws
        * @param {Map<string, string>|null} extensions
-       * @param {{ maxPayloadSize?: number }} [options]
        */
-      constructor(ws, extensions, options = {}) {
+      constructor(ws, extensions) {
         super();
         this.ws = ws;
         this.#extensions = extensions == null ? /* @__PURE__ */ new Map() : extensions;
-        this.#maxPayloadSize = options.maxPayloadSize ?? 0;
         if (this.#extensions.has("permessage-deflate")) {
-          this.#extensions.set("permessage-deflate", new PerMessageDeflate(extensions, options));
+          this.#extensions.set("permessage-deflate", new PerMessageDeflate(extensions));
         }
       }
       /**
@@ -17165,13 +17167,6 @@ var require_receiver = __commonJS({
         this.#byteOffset += chunk.length;
         this.#loop = true;
         this.run(callback);
-      }
-      #validatePayloadLength() {
-        if (this.#maxPayloadSize > 0 && !isControlFrame(this.#info.opcode) && this.#info.payloadLength > this.#maxPayloadSize) {
-          failWebsocketConnection(this.ws, "Payload size exceeds maximum allowed size");
-          return false;
-        }
-        return true;
       }
       /**
        * Runs whenever a new chunk is received.
@@ -17232,9 +17227,6 @@ var require_receiver = __commonJS({
             if (payloadLength <= 125) {
               this.#info.payloadLength = payloadLength;
               this.#state = parserStates.READ_DATA;
-              if (!this.#validatePayloadLength()) {
-                return;
-              }
             } else if (payloadLength === 126) {
               this.#state = parserStates.PAYLOADLENGTH_16;
             } else if (payloadLength === 127) {
@@ -17255,9 +17247,6 @@ var require_receiver = __commonJS({
             const buffer = this.consume(2);
             this.#info.payloadLength = buffer.readUInt16BE(0);
             this.#state = parserStates.READ_DATA;
-            if (!this.#validatePayloadLength()) {
-              return;
-            }
           } else if (this.#state === parserStates.PAYLOADLENGTH_64) {
             if (this.#byteOffset < 8) {
               return callback();
@@ -17271,9 +17260,6 @@ var require_receiver = __commonJS({
             }
             this.#info.payloadLength = lower;
             this.#state = parserStates.READ_DATA;
-            if (!this.#validatePayloadLength()) {
-              return;
-            }
           } else if (this.#state === parserStates.READ_DATA) {
             if (this.#byteOffset < this.#info.payloadLength) {
               return callback();
@@ -17284,41 +17270,32 @@ var require_receiver = __commonJS({
               this.#state = parserStates.INFO;
             } else {
               if (!this.#info.compressed) {
-                this.writeFragments(body);
-                if (this.#maxPayloadSize > 0 && this.#fragmentsBytes > this.#maxPayloadSize) {
-                  failWebsocketConnection(this.ws, new MessageSizeExceededError().message);
-                  return;
-                }
+                this.#fragments.push(body);
                 if (!this.#info.fragmented && this.#info.fin) {
-                  websocketMessageReceived(this.ws, this.#info.binaryType, this.consumeFragments());
+                  const fullMessage = Buffer.concat(this.#fragments);
+                  websocketMessageReceived(this.ws, this.#info.binaryType, fullMessage);
+                  this.#fragments.length = 0;
                 }
                 this.#state = parserStates.INFO;
               } else {
-                this.#extensions.get("permessage-deflate").decompress(
-                  body,
-                  this.#info.fin,
-                  (error2, data) => {
-                    if (error2) {
-                      failWebsocketConnection(this.ws, error2.message);
-                      return;
-                    }
-                    this.writeFragments(data);
-                    if (this.#maxPayloadSize > 0 && this.#fragmentsBytes > this.#maxPayloadSize) {
-                      failWebsocketConnection(this.ws, new MessageSizeExceededError().message);
-                      return;
-                    }
-                    if (!this.#info.fin) {
-                      this.#state = parserStates.INFO;
-                      this.#loop = true;
-                      this.run(callback);
-                      return;
-                    }
-                    websocketMessageReceived(this.ws, this.#info.binaryType, this.consumeFragments());
-                    this.#loop = true;
-                    this.#state = parserStates.INFO;
-                    this.run(callback);
+                this.#extensions.get("permessage-deflate").decompress(body, this.#info.fin, (error2, data) => {
+                  if (error2) {
+                    failWebsocketConnection(this.ws, error2.message);
+                    return;
                   }
-                );
+                  this.#fragments.push(data);
+                  if (!this.#info.fin) {
+                    this.#state = parserStates.INFO;
+                    this.#loop = true;
+                    this.run(callback);
+                    return;
+                  }
+                  websocketMessageReceived(this.ws, this.#info.binaryType, Buffer.concat(this.#fragments));
+                  this.#loop = true;
+                  this.#state = parserStates.INFO;
+                  this.#fragments.length = 0;
+                  this.run(callback);
+                });
                 this.#loop = false;
                 break;
               }
@@ -17360,21 +17337,6 @@ var require_receiver = __commonJS({
         }
         this.#byteOffset -= n;
         return buffer;
-      }
-      writeFragments(fragment) {
-        this.#fragmentsBytes += fragment.length;
-        this.#fragments.push(fragment);
-      }
-      consumeFragments() {
-        const fragments = this.#fragments;
-        if (fragments.length === 1) {
-          this.#fragmentsBytes = 0;
-          return fragments.shift();
-        }
-        const output = Buffer.concat(fragments, this.#fragmentsBytes);
-        this.#fragments = [];
-        this.#fragmentsBytes = 0;
-        return output;
       }
       parseCloseBody(data) {
         assert(data.length !== 1);
@@ -17813,10 +17775,7 @@ var require_websocket = __commonJS({
        */
       #onConnectionEstablished(response, parsedExtensions) {
         this[kResponse] = response;
-        const maxPayloadSize = this[kController]?.dispatcher?.webSocketOptions?.maxPayloadSize;
-        const parser = new ByteParser(this, parsedExtensions, {
-          maxPayloadSize
-        });
+        const parser = new ByteParser(this, parsedExtensions);
         parser.on("drain", onParserDrain);
         parser.on("error", onParserError.bind(this));
         response.socket.ws = this;
@@ -19399,134 +19358,99 @@ var require_lib = __commonJS({
   }
 });
 
-// node_modules/content-type/dist/index.js
-var require_dist = __commonJS({
-  "node_modules/content-type/dist/index.js"(exports2) {
+// node_modules/fast-content-type-parse/index.js
+var require_fast_content_type_parse = __commonJS({
+  "node_modules/fast-content-type-parse/index.js"(exports2, module2) {
     "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.format = format;
-    exports2.parse = parse3;
-    var TEXT_REGEXP = /^[\u0009\u0020-\u007e\u0080-\u00ff]*$/;
-    var TOKEN_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
-    var QUOTE_REGEXP = /[\\"]/g;
-    var TYPE_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
-    var NullObject = /* @__PURE__ */ (() => {
-      const C = function() {
-      };
-      C.prototype = /* @__PURE__ */ Object.create(null);
-      return C;
-    })();
-    function format(obj) {
-      const { type, parameters } = obj;
-      if (!type || !TYPE_REGEXP.test(type)) {
-        throw new TypeError(`Invalid type: ${type}`);
+    var NullObject = function NullObject2() {
+    };
+    NullObject.prototype = /* @__PURE__ */ Object.create(null);
+    var paramRE = /; *([!#$%&'*+.^\w`|~-]+)=("(?:[\v\u0020\u0021\u0023-\u005b\u005d-\u007e\u0080-\u00ff]|\\[\v\u0020-\u00ff])*"|[!#$%&'*+.^\w`|~-]+) */gu;
+    var quotedPairRE = /\\([\v\u0020-\u00ff])/gu;
+    var mediaTypeRE = /^[!#$%&'*+.^\w|~-]+\/[!#$%&'*+.^\w|~-]+$/u;
+    var defaultContentType = { type: "", parameters: new NullObject() };
+    Object.freeze(defaultContentType.parameters);
+    Object.freeze(defaultContentType);
+    function parse2(header) {
+      if (typeof header !== "string") {
+        throw new TypeError("argument header is required and must be a string");
       }
-      let result = type;
-      if (parameters) {
-        for (const param of Object.keys(parameters)) {
-          if (!TOKEN_REGEXP.test(param)) {
-            throw new TypeError(`Invalid parameter name: ${param}`);
-          }
-          result += `; ${param}=${qstring(parameters[param])}`;
+      let index = header.indexOf(";");
+      const type = index !== -1 ? header.slice(0, index).trim() : header.trim();
+      if (mediaTypeRE.test(type) === false) {
+        throw new TypeError("invalid media type");
+      }
+      const result = {
+        type: type.toLowerCase(),
+        parameters: new NullObject()
+      };
+      if (index === -1) {
+        return result;
+      }
+      let key;
+      let match;
+      let value;
+      paramRE.lastIndex = index;
+      while (match = paramRE.exec(header)) {
+        if (match.index !== index) {
+          throw new TypeError("invalid parameter format");
         }
+        index += match[0].length;
+        key = match[1].toLowerCase();
+        value = match[2];
+        if (value[0] === '"') {
+          value = value.slice(1, value.length - 1);
+          quotedPairRE.test(value) && (value = value.replace(quotedPairRE, "$1"));
+        }
+        result.parameters[key] = value;
+      }
+      if (index !== header.length) {
+        throw new TypeError("invalid parameter format");
       }
       return result;
     }
-    function parse3(header, options) {
-      const len = header.length;
-      let index = skipOWS(header, 0, len);
-      const valueStart = index;
-      index = skipValue(header, index, len);
-      const valueEnd = trailingOWS(header, valueStart, index);
-      const type = header.slice(valueStart, valueEnd).toLowerCase();
-      const parameters = options?.parameters === false ? new NullObject() : parseParameters(header, index, len);
-      return { type, parameters };
-    }
-    var SP = 32;
-    var HTAB = 9;
-    var SEMI = 59;
-    var EQ = 61;
-    var DQUOTE = 34;
-    var BSLASH = 92;
-    function parseParameters(header, index, len) {
-      const parameters = new NullObject();
-      parameter: while (index < len) {
-        index = skipOWS(header, index + 1, len);
-        const keyStart = index;
-        while (index < len) {
-          const code = header.charCodeAt(index);
-          if (code === SEMI)
-            continue parameter;
-          if (code === EQ) {
-            const keyEnd = trailingOWS(header, keyStart, index);
-            const key = header.slice(keyStart, keyEnd).toLowerCase();
-            index = skipOWS(header, index + 1, len);
-            if (index < len && header.charCodeAt(index) === DQUOTE) {
-              index++;
-              let value = "";
-              while (index < len) {
-                const code2 = header.charCodeAt(index++);
-                if (code2 === DQUOTE) {
-                  index = skipValue(header, index, len);
-                  if (parameters[key] === void 0)
-                    parameters[key] = value;
-                  break;
-                }
-                if (code2 === BSLASH && index < len) {
-                  value += header[index++];
-                  continue;
-                }
-                value += String.fromCharCode(code2);
-              }
-              continue parameter;
-            }
-            const valueStart = index;
-            index = skipValue(header, index, len);
-            if (parameters[key] === void 0) {
-              const valueEnd = trailingOWS(header, valueStart, index);
-              parameters[key] = header.slice(valueStart, valueEnd);
-            }
-            continue parameter;
-          }
-          index++;
+    function safeParse2(header) {
+      if (typeof header !== "string") {
+        return defaultContentType;
+      }
+      let index = header.indexOf(";");
+      const type = index !== -1 ? header.slice(0, index).trim() : header.trim();
+      if (mediaTypeRE.test(type) === false) {
+        return defaultContentType;
+      }
+      const result = {
+        type: type.toLowerCase(),
+        parameters: new NullObject()
+      };
+      if (index === -1) {
+        return result;
+      }
+      let key;
+      let match;
+      let value;
+      paramRE.lastIndex = index;
+      while (match = paramRE.exec(header)) {
+        if (match.index !== index) {
+          return defaultContentType;
         }
+        index += match[0].length;
+        key = match[1].toLowerCase();
+        value = match[2];
+        if (value[0] === '"') {
+          value = value.slice(1, value.length - 1);
+          quotedPairRE.test(value) && (value = value.replace(quotedPairRE, "$1"));
+        }
+        result.parameters[key] = value;
       }
-      return parameters;
-    }
-    function skipValue(str, index, len) {
-      while (index < len) {
-        const char = str.charCodeAt(index);
-        if (char === SEMI)
-          break;
-        index++;
+      if (index !== header.length) {
+        return defaultContentType;
       }
-      return index;
+      return result;
     }
-    function skipOWS(header, index, len) {
-      while (index < len) {
-        const char = header.charCodeAt(index);
-        if (char !== SP && char !== HTAB)
-          break;
-        index++;
-      }
-      return index;
-    }
-    function trailingOWS(header, start, end) {
-      while (end > start) {
-        const char = header.charCodeAt(end - 1);
-        if (char !== SP && char !== HTAB)
-          break;
-        end--;
-      }
-      return end;
-    }
-    function qstring(str) {
-      if (TOKEN_REGEXP.test(str))
-        return str;
-      if (TEXT_REGEXP.test(str))
-        return `"${str.replace(QUOTE_REGEXP, "\\$&")}"`;
-      throw new TypeError(`Invalid parameter value: ${str}`);
-    }
+    module2.exports.default = { parse: parse2, safeParse: safeParse2 };
+    module2.exports.parse = parse2;
+    module2.exports.safeParse = safeParse2;
+    module2.exports.defaultContentType = defaultContentType;
   }
 });
 
@@ -19985,6 +19909,9 @@ function debug(message) {
 function error(message, properties = {}) {
   issueCommand("error", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
+function warning(message, properties = {}) {
+  issueCommand("warning", toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+}
 function info(message) {
   process.stdout.write(message + os3.EOL);
 }
@@ -20095,19 +20022,6 @@ function getProxyFetch(destinationUrl) {
 }
 function getApiBaseUrl() {
   return process.env["GITHUB_API_URL"] || "https://api.github.com";
-}
-function getUserAgentWithOrchestrationId(baseUserAgent) {
-  var _a;
-  const orchId = (_a = process.env["ACTIONS_ORCHESTRATION_ID"]) === null || _a === void 0 ? void 0 : _a.trim();
-  if (orchId) {
-    const sanitizedId = orchId.replace(/[^a-z0-9_.-]/gi, "_");
-    const tag = `actions_orchestration_id/${sanitizedId}`;
-    if (baseUserAgent === null || baseUserAgent === void 0 ? void 0 : baseUserAgent.includes(tag))
-      return baseUserAgent;
-    const ua = baseUserAgent ? `${baseUserAgent} ` : "";
-    return `${ua}${tag}`;
-  }
-  return baseUserAgent;
 }
 
 // node_modules/universal-user-agent/index.js
@@ -20541,7 +20455,7 @@ function withDefaults(oldDefaults, newDefaults) {
 var endpoint = withDefaults(null, DEFAULTS);
 
 // node_modules/@octokit/request/dist-bundle/index.js
-var import_content_type = __toESM(require_dist(), 1);
+var import_fast_content_type_parse = __toESM(require_fast_content_type_parse(), 1);
 
 // node_modules/json-with-bigint/json-with-bigint.js
 var intRegex = /^-?\d+$/;
@@ -20686,7 +20600,7 @@ var RequestError = class extends Error {
 };
 
 // node_modules/@octokit/request/dist-bundle/index.js
-var VERSION2 = "10.0.9";
+var VERSION2 = "10.0.8";
 var defaults_default = {
   headers: {
     "user-agent": `octokit-request.js/${VERSION2} ${getUserAgent()}`
@@ -20804,7 +20718,7 @@ async function getResponseData(response) {
   if (!contentType) {
     return response.text().catch(noop);
   }
-  const mimetype = (0, import_content_type.parse)(contentType);
+  const mimetype = (0, import_fast_content_type_parse.safeParse)(contentType);
   if (isJSONResponse(mimetype)) {
     let text = "";
     try {
@@ -23720,10 +23634,6 @@ function getOctokitOptions(token, options) {
   if (auth2) {
     opts.auth = auth2;
   }
-  const userAgent2 = getUserAgentWithOrchestrationId(opts.userAgent);
-  if (userAgent2) {
-    opts.userAgent = userAgent2;
-  }
   return opts;
 }
 
@@ -23786,15 +23696,27 @@ async function run() {
   const removeImages = containerImages.filter((p) => !keepIds.has(p.id));
   info(`Found ${removeImages.length} tagged images to remove`);
   for (const r of removeImages) {
-    await octokit.rest.packages.deletePackageVersionForOrg({
-      package_type: "container",
-      package_name: packageName,
-      org: owner,
-      package_version_id: r.id
-    });
-    info(
-      `Deleted container image '${r.name}' (with tags: ${r.metadata?.container?.tags?.join(", ")})`
-    );
+    try {
+      await octokit.rest.packages.deletePackageVersionForOrg({
+        package_type: "container",
+        package_name: packageName,
+        org: owner,
+        package_version_id: r.id
+      });
+      info(
+        `Deleted container image '${r.name}' (with tags: ${r.metadata?.container?.tags?.join(", ")})`
+      );
+    } catch (e) {
+      if (e.status === 404) {
+        info(
+          `Container image '${r.name}' was already deleted (likely by a concurrent cleanup), skipping`
+        );
+        continue;
+      }
+      warning(
+        `Failed to delete container image '${r.name}': ${e.message}`
+      );
+    }
   }
 }
 run().catch((e) => {
@@ -23808,13 +23730,6 @@ undici/lib/web/fetch/body.js:
 
 undici/lib/web/websocket/frame.js:
   (*! ws. MIT License. Einar Otto Stangvik <einaros@gmail.com> *)
-
-content-type/dist/index.js:
-  (*!
-   * content-type
-   * Copyright(c) 2015 Douglas Christopher Wilson
-   * MIT Licensed
-   *)
 
 @octokit/request-error/dist-src/index.js:
   (* v8 ignore else -- @preserve -- Bug with vitest coverage where it sees an else branch that doesn't exist *)
